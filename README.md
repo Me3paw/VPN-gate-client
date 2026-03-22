@@ -2,7 +2,7 @@
 
 A lightweight Python script to connect to [VPN Gate](https://www.vpngate.net/) servers using NetworkManager (`nmcli`). Optimized for modern Linux systems with strict OpenSSL requirements.
 
-**Note:** Tested on CachyOS (Arch) only, but should work in other linux distributions.
+**Note:** Tested on CachyOS (Arch) only, fully vibe coded, without an ounce of networking knowledge, so YMMV.
 
 ## Features
 
