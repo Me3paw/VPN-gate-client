@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTableWidget, QTableWidgetItem, 
                              QPushButton, QLabel, QRadioButton, QButtonGroup, 
                              QHeaderView, QMessageBox)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 # Ensure we can import the core logic
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,15 +15,16 @@ import vpngate_cli as vpncore
 class Worker(QThread):
     finished = pyqtSignal(bool, str)
     
-    def __init__(self, action, server=None):
+    def __init__(self, action, server=None, proto=None):
         super().__init__()
         self.action = action
         self.server = server
+        self.proto = proto
         
     def run(self):
         try:
             if self.action == "connect":
-                success, msg = vpncore.connect_vpn(self.server)
+                success, msg = vpncore.connect_vpn(self.server, force_proto=self.proto)
             else:
                 success, msg = vpncore.disconnect_vpn()
             self.finished.emit(success, msg)
@@ -33,17 +34,16 @@ class Worker(QThread):
 class VPNWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VPN Gate GUI (Qt/Wayland)")
-        self.setMinimumSize(900, 600)
+        self.setWindowTitle("VPN Gate Client (Qt/Wayland)")
+        self.setMinimumSize(950, 650)
         self.all_servers = []
         self.filtered_servers = []
         
-        # Central Widget & Main Layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         self.main_layout = QVBoxLayout(central_widget)
         
-        # 1. TOP: Server List (Scrollable)
+        # 1. TOP: Server List
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["Idx", "Proto", "Country", "IP", "Score", "Ping"])
@@ -53,19 +53,29 @@ class VPNWindow(QMainWindow):
         self.table.setAlternatingRowColors(True)
         self.main_layout.addWidget(self.table)
         
-        # 2. MIDDLE: Status Display
-        self.status_label = QLabel("Status: Idle")
-        self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px; border: 1px solid #ccc; border-radius: 5px;")
+        # 2. MIDDLE: Detailed Status
+        self.status_container = QWidget()
+        self.status_layout = QVBoxLayout(self.status_container)
+        
+        self.status_label = QLabel("Status: DISCONNECTED")
+        self.status_label.setStyleSheet("font-size: 16px; font-weight: bold;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.main_layout.addWidget(self.status_label)
+        self.status_layout.addWidget(self.status_label)
+        
+        self.stats_label = QLabel("")
+        self.stats_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.stats_label.setStyleSheet("font-family: monospace; color: #555;")
+        self.status_layout.addWidget(self.stats_label)
+        
+        self.status_container.setStyleSheet("background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; margin: 5px;")
+        self.main_layout.addWidget(self.status_container)
         
         # 3. BOTTOM: Controls
         controls_layout = QHBoxLayout()
         
-        # Protocol Radio Buttons
         self.radio_group = QButtonGroup(self)
-        self.radio_udp = QRadioButton("UDP (Fast)")
-        self.radio_tcp = QRadioButton("TCP (Stable)")
+        self.radio_udp = QRadioButton("UDP Preference")
+        self.radio_tcp = QRadioButton("TCP Preference")
         self.radio_all = QRadioButton("Show All")
         self.radio_udp.setChecked(True)
         
@@ -79,7 +89,6 @@ class VPNWindow(QMainWindow):
         controls_layout.addWidget(self.radio_all)
         controls_layout.addStretch()
         
-        # Action Buttons
         self.btn_refresh = QPushButton("Refresh List")
         self.btn_refresh.clicked.connect(self.load_servers)
         
@@ -99,53 +108,53 @@ class VPNWindow(QMainWindow):
         
         self.main_layout.addLayout(controls_layout)
         
-        # Initialization
+        # Timer for stats update (every 2 seconds)
+        self.stats_timer = QTimer()
+        self.stats_timer.timeout.connect(self.refresh_stats)
+        self.stats_timer.start(2000)
+        
         self.load_servers()
-        self.check_initial_state()
+        self.update_ui_state()
 
     def update_ui_state(self, is_busy=False):
-        # Check actual system state via nmcli
         active = vpncore.is_active()
         
-        # Update Status Label
         if active:
             self.status_label.setText("Status: VPN IS ACTIVE")
-            self.status_label.setStyleSheet("color: #27ae60; font-size: 14px; font-weight: bold; padding: 10px; border: 2px solid #27ae60; border-radius: 5px;")
+            self.status_label.setStyleSheet("color: #27ae60; font-size: 16px; font-weight: bold;")
         else:
             self.status_label.setText("Status: DISCONNECTED")
-            self.status_label.setStyleSheet("color: #c0392b; font-size: 14px; font-weight: bold; padding: 10px; border: 2px solid #c0392b; border-radius: 5px;")
+            self.status_label.setStyleSheet("color: #c0392b; font-size: 16px; font-weight: bold;")
+            self.stats_label.setText("")
 
-        # Enable/Disable logic
         if is_busy:
-            # Disable everything while working
             self.table.setEnabled(False)
             self.btn_connect.setEnabled(False)
             self.btn_disconnect.setEnabled(False)
             self.btn_refresh.setEnabled(False)
-            self.radio_udp.setEnabled(False)
-            self.radio_tcp.setEnabled(False)
-            self.radio_all.setEnabled(False)
+            for b in self.radio_group.buttons(): b.setEnabled(False)
         else:
-            # Normal logic based on active state
             self.table.setEnabled(not active)
             self.btn_connect.setEnabled(not active)
-            self.radio_udp.setEnabled(not active)
-            self.radio_tcp.setEnabled(not active)
-            self.radio_all.setEnabled(not active)
             self.btn_refresh.setEnabled(not active)
-            
-            # Disconnect only enabled if active
             self.btn_disconnect.setEnabled(active)
+            for b in self.radio_group.buttons(): b.setEnabled(not active)
 
-    def check_initial_state(self):
-        self.update_ui_state()
+    def refresh_stats(self):
+        if vpncore.is_active():
+            stats = vpncore.get_stats()
+            if stats:
+                up, down, ping, loss = stats
+                self.stats_label.setText(f"DOWNLOAD: {down:.1f} KB/s  |  UPLOAD: {up:.1f} KB/s  |  PING: {ping}  |  LOSS: {loss}")
+        else:
+            # If it was active but now it's not (disconnected externally)
+            if "ACTIVE" in self.status_label.text():
+                self.update_ui_state()
 
     def load_servers(self):
-        self.status_label.setText("Fetching servers from VPN Gate API...")
+        self.status_label.setText("Status: Fetching servers...")
         QApplication.processEvents()
         self.all_servers = vpncore.get_servers()
-        if not self.all_servers:
-            QMessageBox.warning(self, "API Error", "Could not fetch server list. Check your internet connection.")
         self.apply_filter()
 
     def apply_filter(self):
@@ -156,8 +165,8 @@ class VPNWindow(QMainWindow):
         
         for s in self.all_servers:
             if pref_all: self.filtered_servers.append(s)
-            elif pref_udp and s['is_udp']: self.filtered_servers.append(s)
-            elif pref_tcp and not s['is_udp']: self.filtered_servers.append(s)
+            elif pref_udp and s['has_udp']: self.filtered_servers.append(s)
+            elif pref_tcp and s['has_tcp']: self.filtered_servers.append(s)
             
         self.filtered_servers.sort(key=lambda x: int(x['Score']), reverse=True)
         self.update_table()
@@ -165,45 +174,37 @@ class VPNWindow(QMainWindow):
 
     def update_table(self):
         self.table.setRowCount(0)
+        pref_tcp = self.radio_tcp.isChecked()
         for i, s in enumerate(self.filtered_servers[:100]):
             self.table.insertRow(i)
+            # Display logic
+            p_display = "TCP" if (pref_tcp and s['has_tcp']) or not s['has_udp'] else "UDP"
             self.table.setItem(i, 0, QTableWidgetItem(str(i)))
-            self.table.setItem(i, 1, QTableWidgetItem("UDP" if s['is_udp'] else "TCP"))
+            self.table.setItem(i, 1, QTableWidgetItem(p_display))
             self.table.setItem(i, 2, QTableWidgetItem(s['CountryShort']))
             self.table.setItem(i, 3, QTableWidgetItem(s['IP']))
             self.table.setItem(i, 4, QTableWidgetItem(s['Score']))
             self.table.setItem(i, 5, QTableWidgetItem(s['Ping']))
 
     def start_connect(self):
-        # Edge case: Already connected
-        if vpncore.is_active():
-            QMessageBox.critical(self, "Error", "A VPN is already running. Please disconnect first.")
-            self.update_ui_state()
-            return
-
         row = self.table.currentRow()
         if row < 0:
-            QMessageBox.warning(self, "Selection Required", "Please select a server from the list.")
+            QMessageBox.warning(self, "Selection Required", "Please select a server.")
             return
             
         server = self.filtered_servers[row]
-        self.status_label.setText(f"CONNECTING to {server['IP']} (10s timeout)...")
+        proto = "tcp" if self.radio_tcp.isChecked() else "udp"
+        
+        self.status_label.setText(f"Status: Connecting to {server['IP']}...")
         self.update_ui_state(is_busy=True)
         
-        self.worker = Worker("connect", server)
+        self.worker = Worker("connect", server, proto)
         self.worker.finished.connect(self.on_action_finished)
         self.worker.start()
 
     def start_disconnect(self):
-        # Edge case: Not connected
-        if not vpncore.is_active():
-            QMessageBox.information(self, "Info", "No active connection to disconnect.")
-            self.update_ui_state()
-            return
-
-        self.status_label.setText("DISCONNECTING and cleaning up...")
+        self.status_label.setText("Status: Disconnecting...")
         self.update_ui_state(is_busy=True)
-        
         self.worker = Worker("disconnect")
         self.worker.finished.connect(self.on_action_finished)
         self.worker.start()
@@ -215,7 +216,6 @@ class VPNWindow(QMainWindow):
         self.update_ui_state(is_busy=False)
 
 if __name__ == "__main__":
-    # Force Wayland for Qt if possible
     os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
     app = QApplication(sys.argv)
     window = VPNWindow()
