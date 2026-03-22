@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VPN Gate Client
+Comment=Python GUI for VPN Gate
+Exec=vpngate-gui
+Icon=/usr/share/vpngate-cli/256.png
+Terminal=false
+Categories=Network;Utility;

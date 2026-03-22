@@ -9,13 +9,13 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon, QAction
 
 # Ensure we can import the core logic
-script_dir = os.path.dirname(os.path.abspath(__file__))
+script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(script_dir)
 import vpngate_core as vpncore
 
-ICON_64 = os.path.join(script_dir, "64.ico")
-ICON_256 = os.path.join(script_dir, "256.ico")
-ICON_32 = os.path.join(script_dir, "32.ico")
+ICON_64 = os.path.join(script_dir, "64.png")
+ICON_256 = os.path.join(script_dir, "256.png")
+ICON_32 = os.path.join(script_dir, "32.png")
 
 class Worker(QThread):
     finished = pyqtSignal(bool, str)
@@ -135,19 +135,19 @@ class VPNWindow(QMainWindow):
         # System Tray
         self.tray_icon = QSystemTrayIcon(self)
         
-        icon = QIcon()
-        # Try different sizes, biggest first for quality, but also check 64/32
-        for icon_path in [ICON_256, ICON_64, ICON_32]:
-            if os.path.exists(icon_path):
-                from PyQt6.QtGui import QPixmap
-                pixmap = QPixmap(icon_path)
-                if not pixmap.isNull():
-                    icon.addPixmap(pixmap)
-                    print(f"Successfully loaded icon: {icon_path}")
+        # Check the highest resolution PNG first
+        print(f"Looking for icon at: {ICON_256}")
         
+        if os.path.exists(ICON_256):
+            icon = QIcon(ICON_256)
+        elif os.path.exists(ICON_64):
+            icon = QIcon(ICON_64)
+        else:
+            icon = QIcon()
+
         if icon.isNull():
             icon = QIcon.fromTheme("network-vpn")
-            print("Using fallback system icon")
+            print("Warning: Custom PNGs not found. Using fallback system icon.")
             
         self.tray_icon.setIcon(icon)
         self.setWindowIcon(icon)
@@ -304,6 +304,10 @@ class VPNWindow(QMainWindow):
 if __name__ == "__main__":
     os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
     app = QApplication(sys.argv)
+    
+    # Add this line so Wayland knows which .desktop file to associate with this process
+    app.setDesktopFileName("vpngate-gui") 
+    
     app.setQuitOnLastWindowClosed(False)
     window = VPNWindow()
     window.show()
