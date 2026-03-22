@@ -32,8 +32,6 @@ def get_servers():
             
             try:
                 config_data = base64.b64decode(server['OpenVPN_ConfigData_Base64']).decode('utf-8', errors='ignore')
-                # Improved detection: A config can have both, but usually specifies a default
-                # We check for explicit 'proto tcp' or if 'proto udp' is NOT present
                 server['has_udp'] = "proto udp" in config_data.lower()
                 server['has_tcp'] = "proto tcp" in config_data.lower() or "proto udp" not in config_data.lower()
                 server['config_text'] = config_data
@@ -50,11 +48,9 @@ def is_active():
     return CONNECTION_NAME in res.stdout
 
 def get_stats():
-    """Returns (up_speed, down_speed, ping, loss) or None if not active"""
     if not is_active():
         return None
     
-    # Get device name from nmcli
     res = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], capture_output=True, text=True)
     device = None
     for line in res.stdout.splitlines():
@@ -65,34 +61,33 @@ def get_stats():
     if not device:
         return None
 
-    # Get speeds from /proc/net/dev (bytes)
     def get_bytes():
-        with open("/proc/net/dev", "r") as f:
-            for line in f:
-                if device in line:
-                    parts = line.split()
-                    return int(parts[1]), int(parts[9]) # rx, tx
+        try:
+            with open("/proc/net/dev", "r") as f:
+                for line in f:
+                    if device in line:
+                        parts = line.split()
+                        return int(parts[1]), int(parts[9])
+        except:
+            pass
         return 0, 0
 
     b1_rx, b1_tx = get_bytes()
     time.sleep(1)
     b2_rx, b2_tx = get_bytes()
     
-    down_speed = (b2_rx - b1_rx) / 1024 # KB/s
-    up_speed = (b2_tx - b1_tx) / 1024 # KB/s
+    down_speed = (b2_rx - b1_rx) / 1024
+    up_speed = (b2_tx - b1_tx) / 1024
 
-    # Get ping/loss via ping command (3 packets)
     ping_res = subprocess.run(["ping", "-c", "3", "-W", "2", "8.8.8.8"], capture_output=True, text=True)
     ping_val = "N/A"
     loss_val = "100%"
     
     if ping_res.returncode == 0:
-        # Extract loss
         loss_match = re.search(r"(\d+)% packet loss", ping_res.stdout)
         if loss_match:
             loss_val = loss_match.group(1) + "%"
         
-        # Extract avg ping
         avg_match = re.search(r"avg/max/mdev = [\d\.]+/([\d\.]+)/", ping_res.stdout)
         if avg_match:
             ping_val = avg_match.group(1) + " ms"
@@ -105,7 +100,6 @@ def connect_vpn(server, force_proto=None):
 
     config_data = server['config_text']
     
-    # If the user explicitly requested TCP/UDP, we try to force it in the config
     if force_proto == "tcp":
         config_data = re.sub(r"proto udp", "proto tcp", config_data, flags=re.IGNORECASE)
     elif force_proto == "udp":
@@ -126,15 +120,13 @@ def connect_vpn(server, force_proto=None):
     remote_ip = remote_match.group(1) if remote_match else server['IP']
     remote_port = remote_match.group(2) if remote_match else "443"
     
-    is_udp = "proto udp" in config_data.lower()
-    proto_str = "no" if is_udp else "yes"
-
     subprocess.run(["nmcli", "connection", "modify", CONNECTION_NAME, 
                     "vpn.user-name", "vpn",
                     "vpn.secrets", "password=vpn",
-                    "+vpn.data", f"auth=SHA1, cipher=AES-128-CBC, data-ciphers=AES-256-GCM:AES-128-GCM:AES-128-CBC, data-ciphers-fallback=AES-128-CBC, connection-type=password, remote={remote_ip}, port={remote_port}, proto-tcp={proto_str}"], capture_output=True)
+                    "+vpn.data", f"auth=SHA1, cipher=AES-128-CBC, data-ciphers=AES-256-GCM:AES-128-GCM:AES-128-CBC, data-ciphers-fallback=AES-128-CBC, connection-type=password, remote={remote_ip}, port={remote_port}"], capture_output=True)
 
-    print(f"Activating {('UDP' if is_udp else 'TCP')} connection (10s timeout)...")
+    is_currently_udp = "proto udp" in config_data.lower()
+    print(f"Activating {('UDP' if is_currently_udp else 'TCP')} connection (10s timeout)...")
     try:
         up_res = subprocess.run(["timeout", "10s", "nmcli", "connection", "up", CONNECTION_NAME], capture_output=True, text=True)
         
@@ -205,7 +197,6 @@ if __name__ == "__main__":
     print(f"{'Idx':<4} | {'Proto':<5} | {'Country':<15} | {'IP':<15} | {'Score':<10} | {'Ping':<5}")
     print("-" * 75)
     for i, s in enumerate(filtered[:20]):
-        # Determine what to display based on pref
         p = "UDP" if (proto_pref != "tcp" and s['has_udp']) else "TCP"
         print(f"{i:<4} | {p:<5} | {s['CountryShort']:<15} | {s['IP']:<15} | {s['Score']:<10} | {s['Ping']:<5}")
 
@@ -214,7 +205,6 @@ if __name__ == "__main__":
         if choice.lower() == 'q': sys.exit(0)
         idx = int(choice)
         if 0 <= idx < len(filtered):
-            # Pass pref to connect_vpn to force the proto in the config file
             success, msg = connect_vpn(filtered[idx], force_proto=("tcp" if proto_pref == "tcp" else None))
             print(msg)
         else:
