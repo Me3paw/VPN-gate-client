@@ -8,7 +8,7 @@ A lightweight Python script to connect to [VPN Gate](https://www.vpngate.net/) s
 
 - **Protocol Preference:** Defaults to **UDP** for lower latency and better speed.
 - **Legacy Support:** Automatically configures older encryption standards (`AES-128-CBC`, `SHA1`) required by most VPN Gate servers.
-- **Speed Optimized:** Implements a **5-second connection timeout**—if a server doesn't connect instantly, it's skipped.
+- **Speed Optimized:** Implements a **10-second connection timeout**—if a server doesn't connect instantly, it's skipped, because I'm ADHD ish
 - **Easy Cleanup:** One command to disconnect and completely remove the VPN configuration from your system.
 - **No Persistence:** Doesn't leave clutter in your NetworkManager list after use.
 
@@ -66,10 +66,11 @@ Connect to a VPN using the command line:
 ## Troubleshooting
 
 ### Connection Timeouts
-The script enforces a 5s timeout. Many VPN Gate servers are hosted by volunteers and may be offline or congested. If a connection times out:
+The script enforces a 10s timeout. Many VPN Gate servers are hosted by volunteers and may be offline or congested. If a connection times out:
 1. Run `vpngate` again.
 2. Pick a different server index (try one with a slightly higher ping but high score).
 3. If UDP consistently fails, try `vpngate --tcp`.
+4. If network slow, increase timeout to whatever u want in the code
 
 ### Technical Details
 - **Connection Name:** `vpngate-active`
